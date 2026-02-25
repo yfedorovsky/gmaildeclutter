@@ -6,13 +6,14 @@ import {
   index,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
+import { createId } from "@paralleldrive/cuid2";
 
 // ============================================================
 // AUTH TABLES (required by Auth.js Drizzle Adapter)
 // ============================================================
 
 export const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
+  id: text("id").primaryKey().$defaultFn(() => createId()),
   name: text("name"),
   email: text("email").notNull(),
   emailVerified: integer("email_verified", { mode: "timestamp" }),
@@ -22,7 +23,7 @@ export const users = sqliteTable("users", {
 export const accounts = sqliteTable(
   "accounts",
   {
-    id: text("id").primaryKey(),
+    id: text("id").primaryKey().$defaultFn(() => createId()),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
