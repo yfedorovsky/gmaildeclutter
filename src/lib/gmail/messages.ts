@@ -10,12 +10,16 @@ const METADATA_HEADERS = [
   "List-Unsubscribe-Post",
 ];
 
-export async function listAllMessageIds(
+/**
+ * Async generator that yields pages of message IDs.
+ * Each page contains up to `pageSize` IDs (default 500).
+ * Never holds more than one page in memory at a time.
+ */
+export async function* listMessageIdPages(
   gmail: gmail_v1.Gmail,
   query?: string,
-  maxResults?: number
-): Promise<string[]> {
-  const messageIds: string[] = [];
+  pageSize: number = 500
+): AsyncGenerator<string[], void, unknown> {
   let pageToken: string | undefined;
 
   do {
@@ -24,23 +28,40 @@ export async function listAllMessageIds(
     const response = await gmail.users.messages.list({
       userId: "me",
       q: query || "after:2024/01/01",
-      maxResults: 500,
+      maxResults: pageSize,
       pageToken,
     });
 
     const messages = response.data.messages || [];
-    for (const msg of messages) {
-      if (msg.id) messageIds.push(msg.id);
+    const ids = messages
+      .map((msg) => msg.id)
+      .filter((id): id is string => !!id);
+
+    if (ids.length > 0) {
+      yield ids;
     }
 
     pageToken = response.data.nextPageToken || undefined;
-
-    if (maxResults && messageIds.length >= maxResults) {
-      return messageIds.slice(0, maxResults);
-    }
   } while (pageToken);
+}
 
-  return messageIds;
+/**
+ * Backward-compatible wrapper: loads all IDs into memory.
+ * Prefer listMessageIdPages for streaming.
+ */
+export async function listAllMessageIds(
+  gmail: gmail_v1.Gmail,
+  query?: string,
+  maxResults?: number
+): Promise<string[]> {
+  const all: string[] = [];
+  for await (const page of listMessageIdPages(gmail, query)) {
+    all.push(...page);
+    if (maxResults && all.length >= maxResults) {
+      return all.slice(0, maxResults);
+    }
+  }
+  return all;
 }
 
 function extractHeader(

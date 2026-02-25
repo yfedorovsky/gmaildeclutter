@@ -1,6 +1,6 @@
 import { db } from "@/db";
 import { emailMessages, senderProfiles } from "@/db/schema";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { computeClutterScore } from "@/lib/utils/clutter-score";
 import { createId } from "@paralleldrive/cuid2";
 
@@ -8,7 +8,7 @@ export async function groupBySender(
   userId: string,
   scanId: string
 ): Promise<number> {
-  // Aggregate emails by sender address
+  // ---- Query 1: Aggregate stats per sender ----
   const groups = await db
     .select({
       senderAddress: emailMessages.senderAddress,
@@ -17,69 +17,87 @@ export async function groupBySender(
       totalCount: sql<number>`COUNT(*)`,
       readCount: sql<number>`SUM(CASE WHEN ${emailMessages.isRead} THEN 1 ELSE 0 END)`,
       starredCount: sql<number>`SUM(CASE WHEN ${emailMessages.isStarred} THEN 1 ELSE 0 END)`,
-      oldestEmailAt: sql<Date>`MIN(${emailMessages.receivedAt})`,
-      newestEmailAt: sql<Date>`MAX(${emailMessages.receivedAt})`,
-      hasListUnsubscribe: sql<boolean>`MAX(CASE WHEN ${emailMessages.listUnsubscribe} IS NOT NULL THEN 1 ELSE 0 END)`,
+      oldestEmailAt: sql<number | null>`MIN(${emailMessages.receivedAt})`,
+      newestEmailAt: sql<number | null>`MAX(${emailMessages.receivedAt})`,
+      hasListUnsubscribe: sql<number>`MAX(CASE WHEN ${emailMessages.listUnsubscribe} IS NOT NULL THEN 1 ELSE 0 END)`,
     })
     .from(emailMessages)
     .where(
-      and(eq(emailMessages.userId, userId), eq(emailMessages.scanId, scanId))
+      and(
+        eq(emailMessages.userId, userId),
+        eq(emailMessages.lastSeenScanId, scanId)
+      )
     )
     .groupBy(emailMessages.senderAddress, emailMessages.senderDomain);
 
+  if (groups.length === 0) return 0;
+
+  // ---- Query 2: Top 3 subjects per sender using window function ----
+  const subjectRows = db.$client
+    .prepare(
+      `SELECT sender_address, subject FROM (
+        SELECT sender_address, subject,
+          ROW_NUMBER() OVER (PARTITION BY sender_address ORDER BY received_at DESC) AS rn
+        FROM email_messages
+        WHERE user_id = ? AND last_seen_scan_id = ? AND subject IS NOT NULL
+      ) WHERE rn <= 3`
+    )
+    .all(userId, scanId) as { sender_address: string; subject: string }[];
+
+  const subjectMap = new Map<string, string[]>();
+  for (const row of subjectRows) {
+    const existing = subjectMap.get(row.sender_address) || [];
+    const truncated =
+      row.subject.length > 100
+        ? row.subject.slice(0, 100) + "..."
+        : row.subject;
+    existing.push(truncated);
+    subjectMap.set(row.sender_address, existing);
+  }
+
+  // ---- Query 3: Bulk unsubscribe headers (one per sender) ----
+  const unsubRows = db.$client
+    .prepare(
+      `SELECT sender_address, list_unsubscribe, list_unsubscribe_post FROM (
+        SELECT sender_address, list_unsubscribe, list_unsubscribe_post,
+          ROW_NUMBER() OVER (PARTITION BY sender_address ORDER BY received_at DESC) AS rn
+        FROM email_messages
+        WHERE user_id = ? AND last_seen_scan_id = ? AND list_unsubscribe IS NOT NULL
+      ) WHERE rn = 1`
+    )
+    .all(userId, scanId) as {
+    sender_address: string;
+    list_unsubscribe: string;
+    list_unsubscribe_post: string | null;
+  }[];
+
+  const unsubMap = new Map<
+    string,
+    { listUnsubscribe: string; listUnsubscribePost: string | null }
+  >();
+  for (const row of unsubRows) {
+    unsubMap.set(row.sender_address, {
+      listUnsubscribe: row.list_unsubscribe,
+      listUnsubscribePost: row.list_unsubscribe_post,
+    });
+  }
+
+  // ---- Build all sender profile rows in memory ----
   const now = new Date();
-
-  for (const group of groups) {
-    // Get 3 sample subjects
-    const samples = await db
-      .select({ subject: emailMessages.subject })
-      .from(emailMessages)
-      .where(
-        and(
-          eq(emailMessages.senderAddress, group.senderAddress),
-          eq(emailMessages.scanId, scanId)
-        )
-      )
-      .orderBy(desc(emailMessages.receivedAt))
-      .limit(3);
-
-    const sampleSubjects = samples
-      .map((s) => s.subject)
-      .filter(Boolean) as string[];
-
-    // Get first List-Unsubscribe value
-    const unsubRow = group.hasListUnsubscribe
-      ? await db
-          .select({
-            listUnsubscribe: emailMessages.listUnsubscribe,
-            listUnsubscribePost: emailMessages.listUnsubscribePost,
-          })
-          .from(emailMessages)
-          .where(
-            and(
-              eq(emailMessages.senderAddress, group.senderAddress),
-              eq(emailMessages.scanId, scanId),
-              sql`${emailMessages.listUnsubscribe} IS NOT NULL`
-            )
-          )
-          .limit(1)
-          .then((rows) => rows[0] || null)
-      : null;
-
+  const profileRows = groups.map((group) => {
     const unreadCount = group.totalCount - group.readCount;
     const openRate =
       group.totalCount > 0 ? group.readCount / group.totalCount : 0;
 
-    // Calculate average frequency
     let avgFrequencyDays: number | null = null;
     if (
       group.totalCount > 1 &&
-      group.oldestEmailAt &&
-      group.newestEmailAt
+      group.oldestEmailAt != null &&
+      group.newestEmailAt != null
     ) {
-      const oldest = new Date(group.oldestEmailAt).getTime();
-      const newest = new Date(group.newestEmailAt).getTime();
-      const spanDays = (newest - oldest) / (1000 * 60 * 60 * 24);
+      // receivedAt is stored as seconds-since-epoch by Drizzle mode: "timestamp"
+      const spanDays =
+        (group.newestEmailAt - group.oldestEmailAt) / (60 * 60 * 24);
       avgFrequencyDays = spanDays / (group.totalCount - 1);
     }
 
@@ -90,7 +108,10 @@ export async function groupBySender(
       hasListUnsubscribe: !!group.hasListUnsubscribe,
     });
 
-    await db.insert(senderProfiles).values({
+    const unsub = unsubMap.get(group.senderAddress);
+    const sampleSubjects = subjectMap.get(group.senderAddress) || [];
+
+    return {
       id: createId(),
       userId,
       scanId,
@@ -104,20 +125,30 @@ export async function groupBySender(
       openRate,
       sampleSubjects: JSON.stringify(sampleSubjects),
       hasListUnsubscribe: !!group.hasListUnsubscribe,
-      listUnsubscribeValue: unsubRow?.listUnsubscribe || null,
-      listUnsubscribePostValue: unsubRow?.listUnsubscribePost || null,
-      oldestEmailAt: group.oldestEmailAt
-        ? new Date(group.oldestEmailAt)
-        : null,
-      newestEmailAt: group.newestEmailAt
-        ? new Date(group.newestEmailAt)
-        : null,
+      listUnsubscribeValue: unsub?.listUnsubscribe || null,
+      listUnsubscribePostValue: unsub?.listUnsubscribePost || null,
+      oldestEmailAt:
+        group.oldestEmailAt != null
+          ? new Date(group.oldestEmailAt * 1000)
+          : null,
+      newestEmailAt:
+        group.newestEmailAt != null
+          ? new Date(group.newestEmailAt * 1000)
+          : null,
       avgFrequencyDays,
       clutterScore,
       createdAt: now,
       updatedAt: now,
-    });
-  }
+    };
+  });
+
+  // ---- Bulk insert in batches of 500 within one transaction ----
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < profileRows.length; i += 500) {
+      const batch = profileRows.slice(i, i + 500);
+      await tx.insert(senderProfiles).values(batch);
+    }
+  });
 
   return groups.length;
 }

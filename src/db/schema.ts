@@ -88,12 +88,10 @@ export const emailMessages = sqliteTable(
   "email_messages",
   {
     id: text("id").primaryKey(),
-    scanId: text("scan_id")
-      .notNull()
-      .references(() => scans.id, { onDelete: "cascade" }),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    lastSeenScanId: text("last_seen_scan_id"),
     threadId: text("thread_id"),
     senderAddress: text("sender_address").notNull(),
     senderName: text("sender_name"),
@@ -107,13 +105,14 @@ export const emailMessages = sqliteTable(
     listUnsubscribe: text("list_unsubscribe"),
     listUnsubscribePost: text("list_unsubscribe_post"),
     receivedAt: integer("received_at", { mode: "timestamp" }),
+    lastUpdated: integer("last_updated", { mode: "timestamp" }),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (table) => [
     index("email_sender_idx").on(table.senderAddress),
     index("email_domain_idx").on(table.senderDomain),
     index("email_user_idx").on(table.userId),
-    index("email_scan_idx").on(table.scanId),
+    index("email_scan_idx").on(table.lastSeenScanId),
   ]
 );
 
@@ -193,3 +192,27 @@ export const actionLog = sqliteTable("action_log", {
   metadata: text("metadata"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
+
+// ============================================================
+// JOB QUEUE
+// ============================================================
+
+export const jobs = sqliteTable(
+  "jobs",
+  {
+    id: text("id").primaryKey(),
+    type: text("type").notNull(),
+    payload: text("payload").notNull(),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    errorMessage: text("error_message"),
+    createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+    startedAt: integer("started_at", { mode: "timestamp" }),
+    completedAt: integer("completed_at", { mode: "timestamp" }),
+  },
+  (table) => [
+    index("jobs_status_idx").on(table.status),
+    index("jobs_type_idx").on(table.type),
+  ]
+);

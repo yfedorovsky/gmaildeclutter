@@ -1,15 +1,15 @@
 import { db } from "@/db";
 import { scans, emailMessages } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { getGmailClient } from "@/lib/gmail/client";
-import { listAllMessageIds, batchGetMessageHeaders } from "@/lib/gmail/messages";
-import { parseSender } from "@/lib/utils/email-parser";
+import { listMessageIdPages, batchGetMessageHeaders } from "@/lib/gmail/messages";
+import { parseSender, decodeMimeHeader } from "@/lib/utils/email-parser";
 import { groupBySender } from "./grouper";
-import { createId } from "@paralleldrive/cuid2";
+
+const CHUNK_SIZE = 500;
 
 export async function scanInbox(userId: string, scanId: string) {
   try {
-    // Update status -> scanning
     await db
       .update(scans)
       .set({ status: "scanning", startedAt: new Date() })
@@ -17,53 +17,65 @@ export async function scanInbox(userId: string, scanId: string) {
 
     const gmail = await getGmailClient(userId);
 
-    // Fetch all message IDs
-    const messageIds = await listAllMessageIds(gmail, "after:2024/01/01");
+    let totalMessagesSeen = 0;
+    let processedMessages = 0;
 
-    await db
-      .update(scans)
-      .set({ totalMessages: messageIds.length })
-      .where(eq(scans.id, scanId));
+    for await (const idPage of listMessageIdPages(gmail, "after:2024/01/01", CHUNK_SIZE)) {
+      totalMessagesSeen += idPage.length;
 
-    // Fetch headers in batches
-    const headers = await batchGetMessageHeaders(
-      gmail,
-      messageIds,
-      async (processed) => {
+      await db
+        .update(scans)
+        .set({ totalMessages: totalMessagesSeen })
+        .where(eq(scans.id, scanId));
+
+      const headers = await batchGetMessageHeaders(gmail, idPage);
+
+      const now = new Date();
+      const chunkRows = headers.map((h) => {
+        const sender = parseSender(h.from);
+        return {
+          id: h.messageId,
+          userId,
+          lastSeenScanId: scanId,
+          threadId: h.threadId,
+          senderAddress: sender.address,
+          senderName: sender.name,
+          senderDomain: sender.domain,
+          subject: decodeMimeHeader(h.subject),
+          labelIds: JSON.stringify(h.labelIds),
+          isRead: !h.labelIds.includes("UNREAD"),
+          isStarred: h.labelIds.includes("STARRED"),
+          listUnsubscribe: h.listUnsubscribe,
+          listUnsubscribePost: h.listUnsubscribePost,
+          receivedAt: h.date ? new Date(h.date) : null,
+          lastUpdated: now,
+          createdAt: now,
+        };
+      });
+
+      if (chunkRows.length > 0) {
         await db
-          .update(scans)
-          .set({ processedMessages: processed })
-          .where(eq(scans.id, scanId));
+          .insert(emailMessages)
+          .values(chunkRows)
+          .onConflictDoUpdate({
+            target: emailMessages.id,
+            set: {
+              lastSeenScanId: sql`excluded.last_seen_scan_id`,
+              lastUpdated: sql`excluded.last_updated`,
+              labelIds: sql`excluded.label_ids`,
+              isRead: sql`excluded.is_read`,
+              isStarred: sql`excluded.is_starred`,
+              listUnsubscribe: sql`excluded.list_unsubscribe`,
+              listUnsubscribePost: sql`excluded.list_unsubscribe_post`,
+            },
+          });
       }
-    );
 
-    // Store email metadata
-    const now = new Date();
-    const emailRows = headers.map((h) => {
-      const sender = parseSender(h.from);
-      return {
-        id: h.messageId,
-        scanId,
-        userId,
-        threadId: h.threadId,
-        senderAddress: sender.address,
-        senderName: sender.name,
-        senderDomain: sender.domain,
-        subject: h.subject,
-        labelIds: JSON.stringify(h.labelIds),
-        isRead: !h.labelIds.includes("UNREAD"),
-        isStarred: h.labelIds.includes("STARRED"),
-        listUnsubscribe: h.listUnsubscribe,
-        listUnsubscribePost: h.listUnsubscribePost,
-        receivedAt: h.date ? new Date(h.date) : null,
-        createdAt: now,
-      };
-    });
-
-    // Insert in batches of 500
-    for (let i = 0; i < emailRows.length; i += 500) {
-      const batch = emailRows.slice(i, i + 500);
-      await db.insert(emailMessages).values(batch).onConflictDoNothing();
+      processedMessages += headers.length;
+      await db
+        .update(scans)
+        .set({ processedMessages })
+        .where(eq(scans.id, scanId));
     }
 
     // Group by sender
@@ -81,9 +93,6 @@ export async function scanInbox(userId: string, scanId: string) {
         totalSenders,
       })
       .where(eq(scans.id, scanId));
-
-    // Classification is triggered separately via /api/classify
-
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     await db

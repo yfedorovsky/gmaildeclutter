@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
       .where(
         and(
           eq(emailMessages.senderAddress, profile.senderAddress),
-          eq(emailMessages.scanId, profile.scanId),
+          eq(emailMessages.lastSeenScanId, profile.scanId),
           eq(emailMessages.userId, session.user.id)
         )
       );

@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
-import { scans } from "@/db/schema";
+import { scans, jobs } from "@/db/schema";
 import { createId } from "@paralleldrive/cuid2";
-import { scanInbox } from "@/lib/pipeline/scanner";
 
 export async function POST() {
   const session = await auth();
@@ -12,6 +11,7 @@ export async function POST() {
   }
 
   const scanId = createId();
+  const jobId = createId();
   const now = new Date();
 
   await db.insert(scans).values({
@@ -21,8 +21,15 @@ export async function POST() {
     createdAt: now,
   });
 
-  // Start scan in background (fire and forget)
-  scanInbox(session.user.id, scanId).catch(console.error);
+  await db.insert(jobs).values({
+    id: jobId,
+    type: "scan",
+    payload: JSON.stringify({ userId: session.user.id, scanId }),
+    status: "pending",
+    attempts: 0,
+    maxAttempts: 3,
+    createdAt: now,
+  });
 
   return NextResponse.json({ scanId });
 }

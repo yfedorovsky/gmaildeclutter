@@ -33,7 +33,9 @@ export function buildClassificationPrompt(
       senderDomain: s.senderDomain,
       totalCount: s.totalCount,
       openRate: Math.round(s.openRate * 100) / 100,
-      sampleSubjects: s.sampleSubjects.slice(0, 3),
+      sampleSubjects: s.sampleSubjects
+        .slice(0, 3)
+        .map((subj) => (subj.length > 100 ? subj.slice(0, 100) + "..." : subj)),
     }))
   );
 }
