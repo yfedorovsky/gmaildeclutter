@@ -142,13 +142,11 @@ export async function groupBySender(
     };
   });
 
-  // ---- Bulk insert in batches of 500 within one transaction ----
-  await db.transaction(async (tx) => {
-    for (let i = 0; i < profileRows.length; i += 500) {
-      const batch = profileRows.slice(i, i + 500);
-      await tx.insert(senderProfiles).values(batch);
-    }
-  });
+  // ---- Bulk insert in batches of 500 (better-sqlite3 is synchronous) ----
+  for (let i = 0; i < profileRows.length; i += 500) {
+    const batch = profileRows.slice(i, i + 500);
+    await db.insert(senderProfiles).values(batch);
+  }
 
   return groups.length;
 }

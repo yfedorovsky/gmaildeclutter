@@ -1,3 +1,10 @@
+import "dotenv/config";
+import { resolve } from "path";
+
+// Load .env.local (Next.js does this automatically, worker does not)
+import { config } from "dotenv";
+config({ path: resolve(process.cwd(), ".env.local") });
+
 import { db } from "@/db";
 import { jobs } from "@/db/schema";
 import { eq } from "drizzle-orm";

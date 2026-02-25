@@ -79,32 +79,50 @@ export async function getMessageHeaders(
   gmail: gmail_v1.Gmail,
   messageId: string
 ): Promise<GmailMessageHeader | null> {
-  await gmailRateLimiter.acquire(5);
+  const MAX_RETRIES = 3;
 
-  try {
-    const response = await gmail.users.messages.get({
-      userId: "me",
-      id: messageId,
-      format: "metadata",
-      metadataHeaders: METADATA_HEADERS,
-    });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    await gmailRateLimiter.acquire(5);
 
-    const msg = response.data;
-    const headers = msg.payload?.headers;
+    try {
+      const response = await gmail.users.messages.get({
+        userId: "me",
+        id: messageId,
+        format: "metadata",
+        metadataHeaders: METADATA_HEADERS,
+      });
 
-    return {
-      messageId: msg.id || messageId,
-      threadId: msg.threadId || "",
-      from: extractHeader(headers, "From") || "",
-      subject: extractHeader(headers, "Subject") || "(no subject)",
-      date: extractHeader(headers, "Date") || "",
-      labelIds: msg.labelIds || [],
-      listUnsubscribe: extractHeader(headers, "List-Unsubscribe"),
-      listUnsubscribePost: extractHeader(headers, "List-Unsubscribe-Post"),
-    };
-  } catch {
-    return null;
+      const msg = response.data;
+      const headers = msg.payload?.headers;
+
+      return {
+        messageId: msg.id || messageId,
+        threadId: msg.threadId || "",
+        from: extractHeader(headers, "From") || "",
+        subject: extractHeader(headers, "Subject") || "(no subject)",
+        date: extractHeader(headers, "Date") || "",
+        labelIds: msg.labelIds || [],
+        listUnsubscribe: extractHeader(headers, "List-Unsubscribe"),
+        listUnsubscribePost: extractHeader(headers, "List-Unsubscribe-Post"),
+      };
+    } catch (error: unknown) {
+      const status =
+        error instanceof Object && "code" in error
+          ? (error as { code: number }).code
+          : 0;
+
+      if (status === 429 && attempt < MAX_RETRIES) {
+        // Exponential backoff: 2s, 4s, 8s
+        await new Promise((r) =>
+          setTimeout(r, 2000 * Math.pow(2, attempt))
+        );
+        continue;
+      }
+      return null;
+    }
   }
+
+  return null;
 }
 
 export async function batchGetMessageHeaders(
