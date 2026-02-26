@@ -36,9 +36,11 @@ export default function DashboardPage() {
     fetchStats();
   }, []);
 
-  // Refresh stats when scan completes
+  // Auto-trigger classification when scan reaches "classifying" status
   useEffect(() => {
-    if (progress?.status === "complete") {
+    if (progress?.status === "classifying") {
+      startClassification();
+    } else if (progress?.status === "complete") {
       setScanning(false);
       toast.success("Inbox scan complete!");
       fetchStats();
