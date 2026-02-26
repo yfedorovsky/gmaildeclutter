@@ -1,28 +1,24 @@
 /**
- * Queue-based token bucket rate limiter with concurrency cap.
+ * Queue-based token bucket rate limiter.
  * Safe for concurrent access — requests are serialized through a FIFO queue
  * so Promise.all() callers are properly throttled.
+ *
+ * Concurrency is controlled externally by callers (e.g., batchGetMessageHeaders
+ * uses batch sizes of 50). The token bucket handles throughput limiting.
  */
 export class RateLimiter {
   private tokens: number;
   private lastRefill: number;
   private readonly capacity: number;
   private readonly refillRate: number; // tokens per ms
-  private readonly maxConcurrent: number;
-  private inFlight = 0;
   private queue: Array<{ cost: number; resolve: () => void }> = [];
   private draining = false;
 
-  constructor(
-    capacity: number = 250,
-    refillRatePerSecond: number = 250,
-    maxConcurrent: number = 10
-  ) {
+  constructor(capacity: number = 250, refillRatePerSecond: number = 250) {
     this.capacity = capacity;
     this.tokens = capacity;
     this.lastRefill = Date.now();
     this.refillRate = refillRatePerSecond / 1000;
-    this.maxConcurrent = maxConcurrent;
   }
 
   private refill() {
@@ -43,14 +39,6 @@ export class RateLimiter {
   }
 
   /**
-   * Call after request completes to free a concurrency slot.
-   */
-  release(): void {
-    this.inFlight = Math.max(0, this.inFlight - 1);
-    this.drain();
-  }
-
-  /**
    * Penalize the rate limiter (e.g., on 429 response).
    * Drains tokens to force a cooldown period.
    */
@@ -66,15 +54,8 @@ export class RateLimiter {
       this.refill();
       const next = this.queue[0];
 
-      // Wait if at concurrency limit
-      if (this.inFlight >= this.maxConcurrent) {
-        await new Promise((r) => setTimeout(r, 50));
-        continue;
-      }
-
       if (this.tokens >= next.cost) {
         this.tokens -= next.cost;
-        this.inFlight++;
         this.queue.shift();
         next.resolve();
       } else {
@@ -90,5 +71,4 @@ export class RateLimiter {
 
 // Gmail API quota: 250 quota units/sec per user (15,000/min)
 // messages.get = 5 units → ~50 fetches/sec at full throttle
-// maxConcurrent: 10 prevents burst overload on Gmail API
-export const gmailRateLimiter = new RateLimiter(250, 250, 10);
+export const gmailRateLimiter = new RateLimiter(250, 250);
