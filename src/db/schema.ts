@@ -114,6 +114,11 @@ export const emailMessages = sqliteTable(
     index("email_domain_idx").on(table.senderDomain),
     index("email_user_idx").on(table.userId),
     index("email_scan_idx").on(table.lastSeenScanId),
+    index("email_user_scan_sender_idx").on(
+      table.userId,
+      table.lastSeenScanId,
+      table.senderAddress
+    ),
   ]
 );
 

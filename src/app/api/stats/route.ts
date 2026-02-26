@@ -3,7 +3,6 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { scans, senderProfiles, actionLog } from "@/db/schema";
 import { eq, desc, sql, and } from "drizzle-orm";
-import { computeHealthScore } from "@/lib/utils/health-score";
 
 export async function GET() {
   const session = await auth();
@@ -32,53 +31,68 @@ export async function GET() {
     });
   }
 
-  // Get all sender profiles for this scan
-  const profiles = await db
-    .select()
+  // Q1: Category aggregates + health data (single query instead of full table load)
+  const categoryRows = await db
+    .select({
+      category: sql<string>`COALESCE(${senderProfiles.category}, 'unclassified')`,
+      count: sql<number>`COUNT(*)`,
+      emails: sql<number>`SUM(${senderProfiles.totalCount})`,
+      weightedClutter: sql<number>`SUM(${senderProfiles.clutterScore} * ${senderProfiles.totalCount})`,
+    })
     .from(senderProfiles)
     .where(
       and(
         eq(senderProfiles.userId, session.user.id),
         eq(senderProfiles.scanId, latestScan.id)
       )
-    );
+    )
+    .groupBy(sql`COALESCE(${senderProfiles.category}, 'unclassified')`);
 
-  // Health score
-  const healthScore = computeHealthScore(
-    profiles.map((p) => ({
-      clutterScore: p.clutterScore,
-      totalCount: p.totalCount,
-    }))
-  );
-
-  // Category breakdown
+  // Derive totals from aggregated rows
+  let totalSenders = 0;
+  let totalEmails = 0;
+  let totalWeightedClutter = 0;
   const categories: Record<string, { count: number; emails: number }> = {};
-  for (const p of profiles) {
-    const cat = p.category || "unclassified";
-    if (!categories[cat]) categories[cat] = { count: 0, emails: 0 };
-    categories[cat].count++;
-    categories[cat].emails += p.totalCount;
+
+  for (const row of categoryRows) {
+    totalSenders += Number(row.count);
+    totalEmails += Number(row.emails);
+    totalWeightedClutter += Number(row.weightedClutter);
+    categories[row.category] = {
+      count: Number(row.count),
+      emails: Number(row.emails),
+    };
   }
 
-  // Total emails
-  const totalEmails = profiles.reduce((sum, p) => sum + p.totalCount, 0);
+  // Health score = 100 - weighted average clutter
+  const healthScore =
+    totalEmails > 0
+      ? Math.round(100 - totalWeightedClutter / totalEmails)
+      : null;
 
-  // Top 10 clutter senders
-  const topClutter = [...profiles]
-    .sort((a, b) => b.clutterScore - a.clutterScore)
-    .slice(0, 10)
-    .map((p) => ({
-      id: p.id,
-      senderAddress: p.senderAddress,
-      senderName: p.senderName,
-      totalCount: p.totalCount,
-      openRate: p.openRate,
-      clutterScore: p.clutterScore,
-      category: p.category,
-      hasListUnsubscribe: p.hasListUnsubscribe,
-    }));
+  // Q2: Top 10 clutter senders (only needed columns)
+  const topClutter = await db
+    .select({
+      id: senderProfiles.id,
+      senderAddress: senderProfiles.senderAddress,
+      senderName: senderProfiles.senderName,
+      totalCount: senderProfiles.totalCount,
+      openRate: senderProfiles.openRate,
+      clutterScore: senderProfiles.clutterScore,
+      category: senderProfiles.category,
+      hasListUnsubscribe: senderProfiles.hasListUnsubscribe,
+    })
+    .from(senderProfiles)
+    .where(
+      and(
+        eq(senderProfiles.userId, session.user.id),
+        eq(senderProfiles.scanId, latestScan.id)
+      )
+    )
+    .orderBy(desc(senderProfiles.clutterScore))
+    .limit(10);
 
-  // Recent actions
+  // Q3: Recent actions (already SQL, keep as-is)
   const recentActions = await db
     .select()
     .from(actionLog)
@@ -88,7 +102,7 @@ export async function GET() {
 
   return NextResponse.json({
     healthScore,
-    totalSenders: profiles.length,
+    totalSenders,
     totalEmails,
     categories,
     topClutter,

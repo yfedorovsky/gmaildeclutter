@@ -24,18 +24,20 @@ export async function POST(request: NextRequest) {
   const gmail = await getGmailClient(session.user.id);
   const results: { senderId: string; success: boolean; method: string }[] = [];
 
-  for (const senderId of senderIds) {
-    const profile = await db
-      .select()
-      .from(senderProfiles)
-      .where(
-        and(
-          eq(senderProfiles.id, senderId),
-          eq(senderProfiles.userId, session.user.id)
-        )
+  // Batch-fetch all profiles upfront (eliminates N+1)
+  const profiles = await db
+    .select()
+    .from(senderProfiles)
+    .where(
+      and(
+        inArray(senderProfiles.id, senderIds),
+        eq(senderProfiles.userId, session.user.id)
       )
-      .limit(1)
-      .then((rows) => rows[0] || null);
+    );
+  const profileMap = new Map(profiles.map((p) => [p.id, p]));
+
+  for (const senderId of senderIds) {
+    const profile = profileMap.get(senderId);
 
     if (!profile || !profile.listUnsubscribeValue) {
       results.push({ senderId, success: false, method: "no-header" });
@@ -60,7 +62,7 @@ export async function POST(request: NextRequest) {
       createdAt: new Date(),
     });
 
-    // Update sender profile
+    // Update sender profile only on success
     if (result.success) {
       await db
         .update(senderProfiles)

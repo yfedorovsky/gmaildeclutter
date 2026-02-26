@@ -26,7 +26,7 @@ export async function POST() {
 
   // Run classification in background
   classifyUnclassifiedSenders(latestScan.id)
-    .then(async (classified) => {
+    .then(async () => {
       if (latestScan.status === "classifying") {
         await db
           .update(scans)
@@ -34,7 +34,14 @@ export async function POST() {
           .where(eq(scans.id, latestScan.id));
       }
     })
-    .catch(console.error);
+    .catch(async (error) => {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown classification error";
+      await db
+        .update(scans)
+        .set({ status: "error", errorMessage })
+        .where(eq(scans.id, latestScan.id));
+    });
 
   return NextResponse.json({ message: "Classification started" });
 }

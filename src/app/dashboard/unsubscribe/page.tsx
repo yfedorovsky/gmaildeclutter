@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClutterScoreBadge } from "@/components/shared/clutter-score-badge";
 import { CategoryBadge } from "@/components/shared/category-badge";
+import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 import {
   Loader2,
   MailMinus,
@@ -35,6 +36,7 @@ export default function UnsubscribePage() {
   const [results, setResults] = useState<
     Record<string, { success: boolean; method: string }>
   >({});
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
     async function fetch_data() {
@@ -78,6 +80,7 @@ export default function UnsubscribePage() {
 
   const unsubscribe = async () => {
     if (selected.size === 0) return;
+    setConfirmOpen(false);
 
     const ids = Array.from(selected);
     setProcessing(new Set(ids));
@@ -118,6 +121,16 @@ export default function UnsubscribePage() {
     }
   };
 
+  // Compute dialog data from selected senders
+  const selectedSenders = senders.filter((s) => selected.has(s.id));
+  const estimatedEmails = selectedSenders.reduce(
+    (sum, s) => sum + s.totalCount,
+    0
+  );
+  const topNames = selectedSenders
+    .slice(0, 5)
+    .map((s) => s.senderName || s.senderAddress);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -138,7 +151,10 @@ export default function UnsubscribePage() {
           </p>
         </div>
         {selected.size > 0 && (
-          <Button onClick={unsubscribe} disabled={processing.size > 0}>
+          <Button
+            onClick={() => setConfirmOpen(true)}
+            disabled={processing.size > 0}
+          >
             {processing.size > 0 ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
@@ -222,6 +238,17 @@ export default function UnsubscribePage() {
           })
         )}
       </div>
+
+      <ActionConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        actionType="unsubscribe"
+        senderCount={selected.size}
+        estimatedEmails={estimatedEmails}
+        topSenderNames={topNames}
+        onConfirm={unsubscribe}
+        loading={processing.size > 0}
+      />
     </div>
   );
 }

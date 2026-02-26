@@ -1,6 +1,12 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const categoryColors: Record<string, string> = {
@@ -27,14 +33,45 @@ const categoryLabels: Record<string, string> = {
   unclassified: "Unclassified",
 };
 
-export function CategoryBadge({ category }: { category: string | null }) {
+const LOW_CONFIDENCE_THRESHOLD = 0.6;
+
+interface CategoryBadgeProps {
+  category: string | null;
+  confidence?: number | null;
+}
+
+export function CategoryBadge({ category, confidence }: CategoryBadgeProps) {
   const cat = category || "unclassified";
-  return (
+  const label = categoryLabels[cat] || cat;
+  const isLowConfidence =
+    confidence != null && confidence < LOW_CONFIDENCE_THRESHOLD;
+
+  const badge = (
     <Badge
       variant="outline"
       className={cn("text-xs", categoryColors[cat] || categoryColors.other)}
     >
-      {categoryLabels[cat] || cat}
+      {label}
+      {isLowConfidence && (
+        <span className="ml-0.5 opacity-60">?</span>
+      )}
     </Badge>
   );
+
+  if (isLowConfidence) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>{badge}</TooltipTrigger>
+          <TooltipContent>
+            <p className="text-xs">
+              Low AI confidence ({Math.round((confidence ?? 0) * 100)}%)
+            </p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+
+  return badge;
 }

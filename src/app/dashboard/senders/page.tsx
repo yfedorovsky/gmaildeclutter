@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { ClutterScoreBadge } from "@/components/shared/clutter-score-badge";
 import { CategoryBadge } from "@/components/shared/category-badge";
+import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 import {
   ArrowUpDown,
   Loader2,
@@ -41,6 +42,7 @@ interface Sender {
   openRate: number;
   clutterScore: number;
   category: string | null;
+  categoryConfidence: number | null;
   hasListUnsubscribe: boolean;
   userAction: string | null;
   sampleSubjects: string[];
@@ -57,6 +59,7 @@ export default function SendersPage() {
   const [acting, setActing] = useState(false);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [confirmAction, setConfirmAction] = useState<string | null>(null);
 
   const fetchSenders = useCallback(async () => {
     setLoading(true);
@@ -113,6 +116,7 @@ export default function SendersPage() {
 
   const runAction = async (action: string) => {
     if (selected.size === 0) return;
+    setConfirmAction(null);
     setActing(true);
 
     try {
@@ -137,6 +141,16 @@ export default function SendersPage() {
       setActing(false);
     }
   };
+
+  // Compute dialog data from selected senders
+  const selectedSenders = senders.filter((s) => selected.has(s.id));
+  const estimatedEmails = selectedSenders.reduce(
+    (sum, s) => sum + s.totalCount,
+    0
+  );
+  const topNames = selectedSenders
+    .slice(0, 5)
+    .map((s) => s.senderName || s.senderAddress);
 
   return (
     <div className="max-w-6xl space-y-6">
@@ -196,7 +210,7 @@ export default function SendersPage() {
               size="sm"
               variant="outline"
               disabled={acting}
-              onClick={() => runAction("unsubscribe")}
+              onClick={() => setConfirmAction("unsubscribe")}
             >
               <MailMinus className="mr-1.5 h-3.5 w-3.5" />
               Unsubscribe
@@ -205,7 +219,7 @@ export default function SendersPage() {
               size="sm"
               variant="outline"
               disabled={acting}
-              onClick={() => runAction("archive")}
+              onClick={() => setConfirmAction("archive")}
             >
               <Archive className="mr-1.5 h-3.5 w-3.5" />
               Archive
@@ -214,7 +228,7 @@ export default function SendersPage() {
               size="sm"
               variant="destructive"
               disabled={acting}
-              onClick={() => runAction("trash")}
+              onClick={() => setConfirmAction("trash")}
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
               Trash
@@ -315,7 +329,10 @@ export default function SendersPage() {
                     {sender.totalCount}
                   </TableCell>
                   <TableCell>
-                    <CategoryBadge category={sender.category} />
+                    <CategoryBadge
+                      category={sender.category}
+                      confidence={sender.categoryConfidence}
+                    />
                   </TableCell>
                   <TableCell className="text-sm">
                     {Math.round(sender.openRate * 100)}%
@@ -363,6 +380,21 @@ export default function SendersPage() {
             </Button>
           </div>
         </div>
+      )}
+
+      {confirmAction && (
+        <ActionConfirmDialog
+          open={!!confirmAction}
+          onOpenChange={(open) => {
+            if (!open) setConfirmAction(null);
+          }}
+          actionType={confirmAction}
+          senderCount={selected.size}
+          estimatedEmails={estimatedEmails}
+          topSenderNames={topNames}
+          onConfirm={() => runAction(confirmAction)}
+          loading={acting}
+        />
       )}
     </div>
   );

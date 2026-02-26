@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ClutterScoreBadge } from "@/components/shared/clutter-score-badge";
+import { ActionConfirmDialog } from "@/components/shared/action-confirm-dialog";
 import { Loader2, Archive, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,6 +31,9 @@ export default function CleanupPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<
+    "archive" | "trash" | null
+  >(null);
 
   useEffect(() => {
     async function fetch_data() {
@@ -89,6 +93,7 @@ export default function CleanupPage() {
 
   const runAction = async (action: "archive" | "trash") => {
     if (selected.size === 0) return;
+    setConfirmAction(null);
     setActing(true);
 
     try {
@@ -104,15 +109,16 @@ export default function CleanupPage() {
         toast.success(
           `${action === "archive" ? "Archived" : "Trashed"} ${count.toLocaleString()} emails`
         );
-        setSelected(new Set());
         // Remove actioned senders from UI
+        const selectedSnapshot = new Set(selected);
+        setSelected(new Set());
         setGroups((prev) =>
           prev
             .map((g) => ({
               ...g,
-              senders: g.senders.filter((s) => !selected.has(s.id)),
+              senders: g.senders.filter((s) => !selectedSnapshot.has(s.id)),
               totalEmails: g.senders
-                .filter((s) => !selected.has(s.id))
+                .filter((s) => !selectedSnapshot.has(s.id))
                 .reduce((sum, s) => sum + s.totalCount, 0),
             }))
             .filter((g) => g.senders.length > 0)
@@ -124,6 +130,17 @@ export default function CleanupPage() {
       setActing(false);
     }
   };
+
+  // Compute dialog data from selected senders
+  const allSenders = groups.flatMap((g) => g.senders);
+  const selectedSenders = allSenders.filter((s) => selected.has(s.id));
+  const estimatedEmails = selectedSenders.reduce(
+    (sum, s) => sum + s.totalCount,
+    0
+  );
+  const topNames = selectedSenders
+    .slice(0, 5)
+    .map((s) => s.senderName || s.senderAddress);
 
   if (loading) {
     return (
@@ -151,7 +168,7 @@ export default function CleanupPage() {
               size="sm"
               variant="outline"
               disabled={acting}
-              onClick={() => runAction("archive")}
+              onClick={() => setConfirmAction("archive")}
             >
               <Archive className="mr-1.5 h-3.5 w-3.5" />
               Archive
@@ -160,7 +177,7 @@ export default function CleanupPage() {
               size="sm"
               variant="destructive"
               disabled={acting}
-              onClick={() => runAction("trash")}
+              onClick={() => setConfirmAction("trash")}
             >
               <Trash2 className="mr-1.5 h-3.5 w-3.5" />
               Trash
@@ -213,6 +230,21 @@ export default function CleanupPage() {
             </p>
           </CardContent>
         </Card>
+      )}
+
+      {confirmAction && (
+        <ActionConfirmDialog
+          open={!!confirmAction}
+          onOpenChange={(open) => {
+            if (!open) setConfirmAction(null);
+          }}
+          actionType={confirmAction}
+          senderCount={selected.size}
+          estimatedEmails={estimatedEmails}
+          topSenderNames={topNames}
+          onConfirm={() => runAction(confirmAction)}
+          loading={acting}
+        />
       )}
     </div>
   );

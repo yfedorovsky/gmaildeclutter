@@ -6,6 +6,111 @@ interface UnsubscribeLinks {
   httpUrl: string | null;
 }
 
+// Private/reserved IP ranges that must be blocked (SSRF protection)
+const BLOCKED_IP_PATTERNS = [
+  /^127\./,
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./,
+  /^0\./,
+  /^::1$/,
+  /^fc00:/i,
+  /^fe80:/i,
+  /^fd/i,
+];
+
+const BLOCKED_HOSTNAMES = [
+  "localhost",
+  "0.0.0.0",
+  "[::]",
+  "[::1]",
+  "metadata.google.internal",
+];
+
+/**
+ * Validates a URL is safe to fetch (not internal/private).
+ * String-based checks only — no DNS resolution needed.
+ */
+function isUrlSafe(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+
+    // Only allow http/https
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return false;
+    }
+
+    const hostname = url.hostname.toLowerCase();
+
+    // Block known dangerous hostnames
+    if (BLOCKED_HOSTNAMES.includes(hostname)) {
+      return false;
+    }
+
+    // Block private/reserved IP ranges
+    for (const pattern of BLOCKED_IP_PATTERNS) {
+      if (pattern.test(hostname)) {
+        return false;
+      }
+    }
+
+    // Block AWS/GCP metadata endpoints
+    if (hostname === "169.254.169.254") {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const MAX_REDIRECTS = 3;
+
+/**
+ * Fetch with manual redirect following + SSRF re-validation at each hop.
+ */
+async function safeFetch(
+  url: string,
+  options: RequestInit & { maxRedirects?: number } = {}
+): Promise<Response> {
+  const { maxRedirects = MAX_REDIRECTS, ...fetchOptions } = options;
+  let currentUrl = url;
+
+  for (let i = 0; i <= maxRedirects; i++) {
+    if (!isUrlSafe(currentUrl)) {
+      throw new Error(`Blocked unsafe URL: ${currentUrl}`);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(currentUrl, {
+      ...fetchOptions,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    // Not a redirect — return the response
+    if (response.status < 300 || response.status >= 400) {
+      return response;
+    }
+
+    // Handle redirect
+    const location = response.headers.get("location");
+    if (!location) {
+      return response; // No location header — return as-is
+    }
+
+    // Resolve relative redirects
+    currentUrl = new URL(location, currentUrl).toString();
+  }
+
+  throw new Error(`Too many redirects (>${maxRedirects})`);
+}
+
 export function parseListUnsubscribe(headerValue: string): UnsubscribeLinks {
   const result: UnsubscribeLinks = { mailto: null, httpUrl: null };
 
@@ -35,39 +140,30 @@ export async function executeUnsubscribe(
   // Strategy 1: RFC 8058 one-click unsubscribe (POST)
   if (links.httpUrl && listUnsubscribePost) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(links.httpUrl, {
+      const response = await safeFetch(links.httpUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "List-Unsubscribe=One-Click-Unsubscribe",
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
       if (response.ok || response.status === 204) {
         return { success: true, method: "one-click-post" };
       }
     } catch {
-      // Timeout or network error — fall through to next strategy
+      // Timeout, SSRF block, or network error — fall through
     }
   }
 
   // Strategy 2: HTTP GET unsubscribe link
   if (links.httpUrl) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(links.httpUrl, {
+      const response = await safeFetch(links.httpUrl, {
         method: "GET",
-        redirect: "follow",
-        signal: controller.signal,
       });
-      clearTimeout(timeout);
       if (response.ok) {
         return { success: true, method: "http-get" };
       }
     } catch {
-      // Timeout or network error — fall through to next strategy
+      // Timeout, SSRF block, or network error — fall through
     }
   }
 

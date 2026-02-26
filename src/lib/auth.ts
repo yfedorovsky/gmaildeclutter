@@ -77,7 +77,7 @@ export async function getAccessToken(userId: string): Promise<string | null> {
         expires_at: Math.floor(Date.now() / 1000 + tokens.expires_in),
         ...(tokens.refresh_token && { refresh_token: tokens.refresh_token }),
       })
-      .where(eq(accounts.userId, userId));
+      .where(eq(accounts.id, account.id));
 
     return tokens.access_token;
   }
