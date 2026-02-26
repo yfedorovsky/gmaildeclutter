@@ -95,9 +95,9 @@ export async function groupBySender(
       group.oldestEmailAt != null &&
       group.newestEmailAt != null
     ) {
-      // receivedAt values are in milliseconds (Drizzle timestamp mode)
+      // receivedAt raw values are in seconds (Drizzle mode:"timestamp" stores as Unix seconds)
       const spanDays =
-        (group.newestEmailAt - group.oldestEmailAt) / (1000 * 60 * 60 * 24);
+        (group.newestEmailAt - group.oldestEmailAt) / (60 * 60 * 24);
       avgFrequencyDays = spanDays / (group.totalCount - 1);
     }
 
@@ -129,11 +129,11 @@ export async function groupBySender(
       listUnsubscribePostValue: unsub?.listUnsubscribePost || null,
       oldestEmailAt:
         group.oldestEmailAt != null
-          ? new Date(group.oldestEmailAt)
+          ? new Date(group.oldestEmailAt * 1000)
           : null,
       newestEmailAt:
         group.newestEmailAt != null
-          ? new Date(group.newestEmailAt)
+          ? new Date(group.newestEmailAt * 1000)
           : null,
       avgFrequencyDays,
       clutterScore,
@@ -142,13 +142,13 @@ export async function groupBySender(
     };
   });
 
-  // ---- Bulk insert in batches of 500 (synchronous transaction for atomicity) ----
-  db.$client.transaction(() => {
-    for (let i = 0; i < profileRows.length; i += 500) {
-      const batch = profileRows.slice(i, i + 500);
-      db.insert(senderProfiles).values(batch).run();
-    }
-  });
+  // ---- Bulk insert in batches of 500 ----
+  // Note: db.$client.transaction() returns a function (better-sqlite3 API),
+  // you must CALL the returned function to execute. Use Drizzle's await instead.
+  for (let i = 0; i < profileRows.length; i += 500) {
+    const batch = profileRows.slice(i, i + 500);
+    await db.insert(senderProfiles).values(batch);
+  }
 
   return groups.length;
 }
