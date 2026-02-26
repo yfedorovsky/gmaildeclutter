@@ -35,7 +35,7 @@ export function CategoryChart({ categories }: CategoryChartProps) {
 
   if (data.length === 0) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">
             Categories
@@ -51,7 +51,7 @@ export function CategoryChart({ categories }: CategoryChartProps) {
   }
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           Email Categories

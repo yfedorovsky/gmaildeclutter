@@ -2,10 +2,16 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export function HealthScoreCard({ score }: { score: number | null }) {
+export function HealthScoreCard({
+  score,
+  className,
+}: {
+  score: number | null;
+  className?: string;
+}) {
   if (score === null) {
     return (
-      <Card>
+      <Card className={className}>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-muted-foreground">
             Inbox Health
@@ -32,7 +38,7 @@ export function HealthScoreCard({ score }: { score: number | null }) {
     score >= 80 ? "Healthy" : score >= 50 ? "Needs attention" : "Critical";
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           Inbox Health
