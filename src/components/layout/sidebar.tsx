@@ -9,6 +9,7 @@ import {
   MailMinus,
   Trash2,
   Tags,
+  Paperclip,
   Settings,
 } from "lucide-react";
 
@@ -18,6 +19,7 @@ const navItems = [
   { href: "/dashboard/unsubscribe", label: "Unsubscribe", icon: MailMinus },
   { href: "/dashboard/cleanup", label: "Cleanup", icon: Trash2 },
   { href: "/dashboard/organize", label: "Organize", icon: Tags },
+  { href: "/dashboard/attachments", label: "Attachments", icon: Paperclip },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
