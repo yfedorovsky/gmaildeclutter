@@ -29,6 +29,7 @@ async function getMessageWithSize(
         id: messageId,
         format: "metadata",
         metadataHeaders: ATTACHMENT_HEADERS,
+        fields: "id,threadId,sizeEstimate,labelIds,payload/headers",
       });
 
       const msg = response.data;
@@ -70,24 +71,38 @@ async function getMessageWithSize(
   return null;
 }
 
+export interface AttachmentSearchResult {
+  messages: LargeAttachmentMessage[];
+  totalCount: number;
+  hasMore: boolean;
+}
+
+const PAGE_SIZE = 200;
+const MAX_IDS = 1000;
+
 /**
  * Search Gmail for messages with attachments larger than a given threshold.
- * Returns results sorted by size (largest first).
+ * Supports pagination via offset. Returns results sorted by size (largest first)
+ * within each page.
  */
 export async function searchLargeAttachmentMessages(
   gmail: gmail_v1.Gmail,
   minSizeMB: number,
-  maxResults: number = 200
-): Promise<LargeAttachmentMessage[]> {
+  offset: number = 0
+): Promise<AttachmentSearchResult> {
   const query = `has:attachment larger:${minSizeMB}m`;
-  const messageIds = await listAllMessageIds(gmail, query, maxResults);
+  const allIds = await listAllMessageIds(gmail, query, MAX_IDS);
+  const totalCount = allIds.length;
 
-  if (messageIds.length === 0) return [];
+  const pageIds = allIds.slice(offset, offset + PAGE_SIZE);
+  if (pageIds.length === 0) {
+    return { messages: [], totalCount, hasMore: false };
+  }
 
   const results: LargeAttachmentMessage[] = [];
 
-  for (let i = 0; i < messageIds.length; i += BATCH_SIZE) {
-    const batch = messageIds.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < pageIds.length; i += BATCH_SIZE) {
+    const batch = pageIds.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.all(
       batch.map((id) => getMessageWithSize(gmail, id))
     );
@@ -100,5 +115,9 @@ export async function searchLargeAttachmentMessages(
   // Sort by size descending (largest first)
   results.sort((a, b) => b.sizeEstimate - a.sizeEstimate);
 
-  return results;
+  return {
+    messages: results,
+    totalCount,
+    hasMore: offset + PAGE_SIZE < totalCount,
+  };
 }

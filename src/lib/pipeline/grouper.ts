@@ -95,9 +95,9 @@ export async function groupBySender(
       group.oldestEmailAt != null &&
       group.newestEmailAt != null
     ) {
-      // receivedAt is stored as seconds-since-epoch by Drizzle mode: "timestamp"
+      // receivedAt values are in milliseconds (Drizzle timestamp mode)
       const spanDays =
-        (group.newestEmailAt - group.oldestEmailAt) / (60 * 60 * 24);
+        (group.newestEmailAt - group.oldestEmailAt) / (1000 * 60 * 60 * 24);
       avgFrequencyDays = spanDays / (group.totalCount - 1);
     }
 
@@ -129,11 +129,11 @@ export async function groupBySender(
       listUnsubscribePostValue: unsub?.listUnsubscribePost || null,
       oldestEmailAt:
         group.oldestEmailAt != null
-          ? new Date(group.oldestEmailAt * 1000)
+          ? new Date(group.oldestEmailAt)
           : null,
       newestEmailAt:
         group.newestEmailAt != null
-          ? new Date(group.newestEmailAt * 1000)
+          ? new Date(group.newestEmailAt)
           : null,
       avgFrequencyDays,
       clutterScore,
@@ -142,11 +142,13 @@ export async function groupBySender(
     };
   });
 
-  // ---- Bulk insert in batches of 500 (better-sqlite3 is synchronous) ----
-  for (let i = 0; i < profileRows.length; i += 500) {
-    const batch = profileRows.slice(i, i + 500);
-    await db.insert(senderProfiles).values(batch);
-  }
+  // ---- Bulk insert in batches of 500 (synchronous transaction for atomicity) ----
+  db.$client.transaction(() => {
+    for (let i = 0; i < profileRows.length; i += 500) {
+      const batch = profileRows.slice(i, i + 500);
+      db.insert(senderProfiles).values(batch).run();
+    }
+  });
 
   return groups.length;
 }

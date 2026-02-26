@@ -23,13 +23,19 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const offset = parseInt(
+    request.nextUrl.searchParams.get("offset") || "0",
+    10
+  );
+
   try {
     const gmail = await getGmailClient(session.user.id);
-    const messages = await searchLargeAttachmentMessages(gmail, minSize);
+    const result = await searchLargeAttachmentMessages(gmail, minSize, offset);
 
     return NextResponse.json({
-      messages,
-      count: messages.length,
+      messages: result.messages,
+      count: result.totalCount,
+      hasMore: result.hasMore,
     });
   } catch (error) {
     console.error("Attachment search failed:", error);

@@ -35,31 +35,39 @@ export async function executeUnsubscribe(
   // Strategy 1: RFC 8058 one-click unsubscribe (POST)
   if (links.httpUrl && listUnsubscribePost) {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const response = await fetch(links.httpUrl, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: "List-Unsubscribe=One-Click-Unsubscribe",
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (response.ok || response.status === 204) {
         return { success: true, method: "one-click-post" };
       }
     } catch {
-      // Fall through to next strategy
+      // Timeout or network error — fall through to next strategy
     }
   }
 
   // Strategy 2: HTTP GET unsubscribe link
   if (links.httpUrl) {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
       const response = await fetch(links.httpUrl, {
         method: "GET",
         redirect: "follow",
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
       if (response.ok) {
         return { success: true, method: "http-get" };
       }
     } catch {
-      // Fall through to next strategy
+      // Timeout or network error — fall through to next strategy
     }
   }
 

@@ -48,34 +48,57 @@ function formatDate(dateStr: string): string {
 export default function AttachmentsPage() {
   const [messages, setMessages] = useState<AttachmentMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [acting, setActing] = useState(false);
   const [threshold, setThreshold] = useState<Threshold>("5");
+  const [hasMore, setHasMore] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
 
-  const fetchMessages = useCallback(async (minSize: string) => {
-    setLoading(true);
-    setSelected(new Set());
-
-    try {
-      const res = await fetch(`/api/attachments?minSize=${minSize}`);
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(data.messages);
+  const fetchMessages = useCallback(
+    async (minSize: string, offset: number = 0) => {
+      if (offset === 0) {
+        setLoading(true);
+        setSelected(new Set());
       } else {
-        toast.error("Failed to load attachments");
-        setMessages([]);
+        setLoadingMore(true);
       }
-    } catch {
-      toast.error("Failed to load attachments");
-      setMessages([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+
+      try {
+        const res = await fetch(
+          `/api/attachments?minSize=${minSize}&offset=${offset}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          if (offset === 0) {
+            setMessages(data.messages);
+          } else {
+            setMessages((prev) => [...prev, ...data.messages]);
+          }
+          setHasMore(data.hasMore);
+          setTotalCount(data.count);
+        } else {
+          toast.error("Failed to load attachments");
+          if (offset === 0) setMessages([]);
+        }
+      } catch {
+        toast.error("Failed to load attachments");
+        if (offset === 0) setMessages([]);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     fetchMessages(threshold);
   }, [threshold, fetchMessages]);
+
+  const loadMore = () => {
+    fetchMessages(threshold, messages.length);
+  };
 
   const toggleSelect = (id: string) => {
     const next = new Set(selected);
@@ -196,9 +219,13 @@ export default function AttachmentsPage() {
           <CardContent className="p-4 flex items-center gap-3">
             <HardDrive className="h-5 w-5 text-muted-foreground" />
             <p className="text-sm">
+              Showing{" "}
               <span className="font-semibold">
                 {messages.length.toLocaleString()}
-              </span>{" "}
+              </span>
+              {totalCount > messages.length && (
+                <> of {totalCount.toLocaleString()}</>
+              )}{" "}
               messages using{" "}
               <span className="font-semibold">{formatSize(totalSize)}</span>
             </p>
@@ -255,6 +282,26 @@ export default function AttachmentsPage() {
             })}
           </CardContent>
         </Card>
+      )}
+
+      {/* Load More */}
+      {hasMore && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            disabled={loadingMore}
+            onClick={loadMore}
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                Loading...
+              </>
+            ) : (
+              `Load More (${(totalCount - messages.length).toLocaleString()} remaining)`
+            )}
+          </Button>
+        </div>
       )}
 
       {/* Empty state */}
