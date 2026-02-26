@@ -1,5 +1,5 @@
 import { db } from "@/db";
-import { senderProfiles } from "@/db/schema";
+import { senderProfiles, scans } from "@/db/schema";
 import { eq, isNull, and } from "drizzle-orm";
 import { getDeepSeekClient } from "./deepseek-client";
 import {
@@ -21,6 +21,12 @@ export async function classifyUnclassifiedSenders(
     );
 
   if (unclassified.length === 0) return 0;
+
+  // Reset processedMessages to track classification progress
+  await db
+    .update(scans)
+    .set({ processedMessages: 0 })
+    .where(eq(scans.id, scanId));
 
   let classified = 0;
   const client = getDeepSeekClient();
@@ -111,6 +117,12 @@ export async function classifyUnclassifiedSenders(
         }
       }
     }
+
+    // Update classification progress
+    await db
+      .update(scans)
+      .set({ processedMessages: classified })
+      .where(eq(scans.id, scanId));
   }
 
   return classified;

@@ -26,8 +26,11 @@ export function ScanProgress({
   processedMessages,
   totalSenders,
 }: ScanProgressProps) {
-  const progress =
+  const scanProgress =
     totalMessages > 0 ? (processedMessages / totalMessages) * 100 : 0;
+
+  const classifyProgress =
+    totalSenders > 0 ? (processedMessages / totalSenders) * 100 : 0;
 
   const isActive =
     status === "pending" ||
@@ -50,7 +53,7 @@ export function ScanProgress({
 
           {status === "scanning" && totalMessages > 0 && (
             <>
-              <Progress value={progress} className="h-2" />
+              <Progress value={scanProgress} className="h-2" />
               <p className="text-xs text-muted-foreground">
                 {processedMessages.toLocaleString()} /{" "}
                 {totalMessages.toLocaleString()} emails processed
@@ -58,12 +61,32 @@ export function ScanProgress({
             </>
           )}
 
-          {(status === "grouping" || status === "classifying") && (
+          {status === "grouping" && (
             <p className="text-xs text-muted-foreground">
               {totalSenders > 0
                 ? `Found ${totalSenders.toLocaleString()} unique senders`
                 : "Processing..."}
             </p>
+          )}
+
+          {status === "classifying" && (
+            <>
+              {totalSenders > 0 && processedMessages > 0 ? (
+                <>
+                  <Progress value={classifyProgress} className="h-2" />
+                  <p className="text-xs text-muted-foreground">
+                    Classifying senders... {processedMessages.toLocaleString()} /{" "}
+                    {totalSenders.toLocaleString()}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {totalSenders > 0
+                    ? `Classifying ${totalSenders.toLocaleString()} senders...`
+                    : "Starting classification..."}
+                </p>
+              )}
+            </>
           )}
         </div>
       </CardContent>
